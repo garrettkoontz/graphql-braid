@@ -11,35 +11,23 @@ import com.atlassian.braid.java.util.BraidObjects;
 import graphql.ExecutionInput;
 import graphql.GraphQLError;
 import graphql.execution.DataFetcherResult;
-import graphql.language.AbstractNode;
 import graphql.language.Argument;
-import graphql.language.ArrayValue;
 import graphql.language.Definition;
-import graphql.language.Directive;
 import graphql.language.Document;
 import graphql.language.Field;
 import graphql.language.FragmentDefinition;
 import graphql.language.FragmentSpread;
-import graphql.language.InlineFragment;
 import graphql.language.InputValueDefinition;
-import graphql.language.Node;
-import graphql.language.ObjectField;
-import graphql.language.ObjectValue;
 import graphql.language.OperationDefinition;
 import graphql.language.OperationDefinition.Operation;
 import graphql.language.Selection;
 import graphql.language.SelectionSet;
 import graphql.language.Type;
-import graphql.language.TypeName;
-import graphql.language.Value;
 import graphql.language.VariableDefinition;
 import graphql.language.VariableReference;
 import graphql.schema.DataFetchingEnvironment;
 import graphql.schema.GraphQLFieldDefinition;
-import graphql.schema.GraphQLFieldsContainer;
 import graphql.schema.GraphQLList;
-import graphql.schema.GraphQLModifiedType;
-import graphql.schema.GraphQLObjectType;
 import graphql.schema.GraphQLOutputType;
 import graphql.schema.GraphQLSchema;
 import graphql.schema.GraphQLType;
@@ -57,8 +45,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
-import java.util.function.Predicate;
-import java.util.function.Supplier;
 
 import static com.atlassian.braid.BatchLoaderUtils.getTargetIdsFromEnvironment;
 import static com.atlassian.braid.TypeUtils.findQueryFieldDefinitions;
@@ -66,10 +52,8 @@ import static com.atlassian.braid.graphql.language.GraphQLNodes.printNode;
 import static com.atlassian.braid.java.util.BraidCollectors.SingletonCharacteristics.ALLOW_MULTIPLE_OCCURRENCES;
 import static com.atlassian.braid.java.util.BraidCollectors.nullSafeToMap;
 import static com.atlassian.braid.java.util.BraidCollectors.singleton;
-import static graphql.introspection.Introspection.TypeNameMetaFieldDef;
 import static graphql.language.OperationDefinition.Operation.MUTATION;
 import static graphql.language.OperationDefinition.Operation.QUERY;
-import static java.lang.String.format;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.singletonList;
@@ -222,6 +206,7 @@ class QueryExecutor<C> implements BatchLoaderFactory {
          * Checks the field type for all environments is the same and returns it
          *
          * @param environments the collection of environments to check
+         *
          * @return the found {@link GraphQLOutputType}
          */
         private static GraphQLOutputType checkAndGetFieldOutputType(List<DataFetchingEnvironment> environments) {
@@ -268,7 +253,7 @@ class QueryExecutor<C> implements BatchLoaderFactory {
                                         DataFetchingEnvironment environment) {
             final Field field = cloneFieldBeingFetchedWithAlias(environment, createFieldAlias(counter.incrementAndGet()));
             usedCounterIds.add(counter.get());
-            trimFieldSelection(schemaSource, environment, field);
+            TrimFieldsSelection.trimFieldSelection(schemaSource, environment, field);
             return new FieldRequest(field, counter.get());
         }
     }
@@ -395,126 +380,10 @@ class QueryExecutor<C> implements BatchLoaderFactory {
     }
 
 
-    private static Predicate<Field> isFieldMatchingFieldDefinition(GraphQLFieldDefinition fieldDefinition) {
-        return field -> Objects.equals(fieldDefinition.getName(), field.getName());
-    }
-
     /**
      * Ensures we only ask for fields the data source supports
      */
-    static void trimFieldSelection(SchemaSource schemaSource, DataFetchingEnvironment environment, AbstractNode root) {
-        new GraphQLQueryVisitor() {
-            private GraphQLOutputType parentType = null;
-            private GraphQLOutputType lastFieldType = null;
 
-
-            @Override
-            protected void visitFragmentDefinition(FragmentDefinition node) {
-                if (node == root) {
-                    this.parentType = this.lastFieldType = getFragmentOutputType(environment, node::getTypeCondition);
-                }
-                super.visitFragmentDefinition(node);
-            }
-
-            @Override
-            protected void visitField(Field node) {
-                GraphQLType type;
-                if (node == root) {
-                    final Field field = (Field) root;
-                    type = environment.getFieldType();
-                    parentType = (GraphQLObjectType) environment.getParentType();
-                    Optional<Link> linkWithDifferentFromField = getLinkWithDifferentFromField(schemaSource.getLinks(), parentType.getName(), field.getName());
-                    if (linkWithDifferentFromField.isPresent() && environment.getSource() == null) {
-                        field.setSelectionSet(null);
-                        field.setName(linkWithDifferentFromField.get().getSourceFromField());
-                    }
-                } else {
-                    getLink(schemaSource.getLinks(), parentType.getName(), node.getName())
-                            .ifPresent(l -> node.setSelectionSet(null));
-
-                    if (isTypeNameMetaField(node)) {
-                        type = TypeNameMetaFieldDef.getType();
-                    } else if (parentType instanceof GraphQLFieldsContainer) {
-                        type = GraphQLFieldsContainer.class.cast(parentType).getFieldDefinition(node.getName()).getType();
-                    } else {
-                        throw new IllegalStateException(
-                                format("Could not find definition for field %s, with parent of type: %s",
-                                        node.getName(), parentType));
-                    }
-                }
-
-                while (type instanceof GraphQLModifiedType) {
-                    type = ((GraphQLModifiedType) type).getWrappedType();
-                }
-                lastFieldType = (GraphQLOutputType) type;
-                super.visitField(node);
-            }
-
-            @Override
-            protected void visitInlineFragment(InlineFragment node) {
-                this.parentType = this.lastFieldType = getFragmentOutputType(environment, node::getTypeCondition);
-                super.visitInlineFragment(node);
-            }
-
-            @Override
-            protected void visitSelectionSet(final SelectionSet node) {
-                if (node == null) {
-                    return;
-                }
-
-                if (!node.getChildren().isEmpty()) {
-                    GraphQLOutputType lastParentType = parentType;
-                    parentType = lastFieldType;
-                    for (final Node child : node.getChildren()) {
-
-                        // process child to handle cases where the source from root is different than the source root
-                        if (child instanceof Field) {
-                            Optional<Link> linkWithDifferentFromField = getLinkWithDifferentFromField(schemaSource.getLinks(), parentType.getName(), ((Field) child).getName());
-                            if (linkWithDifferentFromField.isPresent()) {
-                                removeSourceFieldIfDifferentThanFromField(node, linkWithDifferentFromField.get());
-                                addFromFieldToQueryIfMissing(node, linkWithDifferentFromField.get());
-                            }
-                        }
-                        visit(child);
-                    }
-                    parentType = lastParentType;
-                }
-            }
-
-            private void addFromFieldToQueryIfMissing(SelectionSet node, Link link) {
-                Optional<Selection> fromField = node.getSelections().stream()
-                        .filter(s -> s instanceof Field
-                                && ((Field) s).getName().equals(link.getSourceFromField()))
-                        .findFirst();
-                if (!fromField.isPresent()) {
-                    node.getSelections().add(new Field(link.getSourceFromField()));
-                }
-            }
-
-            private void removeSourceFieldIfDifferentThanFromField(SelectionSet node, Link link) {
-                node.getSelections().stream()
-                        .filter(s -> s instanceof Field
-                                && ((Field) s).getName().equals(link.getSourceField()))
-                        .findAny()
-                        .ifPresent(s -> node.getSelections().remove(s));
-            }
-        }.visit(root);
-    }
-
-    private static boolean isTypeNameMetaField(Field node) {
-        return isFieldMatchingFieldDefinition(TypeNameMetaFieldDef).test(node);
-    }
-
-    private static GraphQLOutputType getFragmentOutputType(DataFetchingEnvironment env, Supplier<TypeName> getTypeCondition) {
-        final GraphQLType type = env.getGraphQLSchema()
-                .getTypeMap()
-                .get(getTypeCondition.get().getName());
-
-        if (!(type instanceof GraphQLOutputType)) {
-            throw new IllegalStateException("Unexpected GraphQL type: " + type.getClass());
-        }
-        return GraphQLOutputType.class.cast(type);
-    }
 
     /**
      * Ensures any referenced fragments are included in the query
@@ -525,7 +394,7 @@ class QueryExecutor<C> implements BatchLoaderFactory {
             @Override
             protected void visitFragmentSpread(FragmentSpread node) {
                 FragmentDefinition fragmentDefinition = environment.getFragmentsByName().get(node.getName()).deepCopy();
-                trimFieldSelection(source, environment, fragmentDefinition);
+                TrimFieldsSelection.trimFieldSelection(source, environment, fragmentDefinition);
                 result.put(node.getName(), fragmentDefinition);
                 super.visitFragmentSpread(node);
             }
@@ -533,114 +402,6 @@ class QueryExecutor<C> implements BatchLoaderFactory {
         return result.values();
     }
 
-    private static Optional<Link> getLink(Collection<Link> links, String typeName, String fieldName) {
-        return links.stream()
-                .filter(l -> l.getSourceType().equals(typeName))
-                .filter(l -> l.getSourceFromField().equals(fieldName))
-                .findFirst();
-    }
-
-    private static Optional<Link> getLinkWithDifferentFromField(Collection<Link> links, String typeName, String fieldName) {
-        return links.stream()
-                .filter(l -> l.getSourceType().equals(typeName)
-                        && l.getSourceField().equals(fieldName)
-                        && !l.getSourceFromField().equals(fieldName))
-                .findFirst();
-    }
-
-
-    private static class VariableNamespacingGraphQLQueryVisitor extends GraphQLQueryVisitor {
-        private final int counter;
-        private final OperationDefinition queryType;
-        private final Map<String, Object> variables;
-        private final DataFetchingEnvironment environment;
-        private final OperationDefinition queryOp;
-
-        VariableNamespacingGraphQLQueryVisitor(int counter,
-                                               OperationDefinition operationDefinition,
-                                               Map<String, Object> variables,
-                                               DataFetchingEnvironment environment,
-                                               OperationDefinition queryOp) {
-            this.counter = counter;
-            this.queryType = operationDefinition;
-            this.variables = variables;
-            this.environment = environment;
-            this.queryOp = queryOp;
-        }
-
-        @Override
-        protected void visitField(Field node) {
-            node.setArguments(node.getArguments().stream().map(this::namespaceReferences).collect(toList()));
-            node.setDirectives(node.getDirectives().stream().map(this::namespaceReferences).collect(toList()));
-            super.visitField(node);
-        }
-
-        private Argument namespaceReferences(Argument arg) {
-            return new Argument(arg.getName(), namespaceReferences(arg.getValue()));
-        }
-
-        private Directive namespaceReferences(Directive original) {
-            return new Directive(original.getName(), original.getArguments().stream().map(this::namespaceReferences).collect(toList()));
-        }
-
-        private Value namespaceReferences(Value value) {
-            final Value transformedValue;
-            if (value instanceof VariableReference) {
-                transformedValue = maybeNamespaceReference((VariableReference) value);
-            } else if (value instanceof ObjectValue) {
-                transformedValue = namespaceReferencesForObjectValue((ObjectValue) value);
-            } else if (value instanceof ArrayValue) {
-                transformedValue = namespaceReferencesForArrayValue((ArrayValue) value);
-            } else {
-                transformedValue = value;
-            }
-            return transformedValue;
-        }
-
-        private ObjectValue namespaceReferencesForObjectValue(ObjectValue value) {
-            return new ObjectValue(
-                    value.getChildren().stream()
-                            .map(ObjectField.class::cast)
-                            .map(o -> new ObjectField(o.getName(), namespaceReferences(o.getValue())))
-                            .collect(toList()));
-        }
-
-        private ArrayValue namespaceReferencesForArrayValue(ArrayValue value) {
-            return new ArrayValue(
-                    value.getChildren().stream()
-                            .map(Value.class::cast)
-                            .map(this::namespaceReferences)
-                            .collect(toList()));
-        }
-
-        private VariableReference maybeNamespaceReference(VariableReference value) {
-            return isVariableAlreadyNamespaced(value) ? value : namespaceVariable(value);
-        }
-
-        private VariableReference namespaceVariable(VariableReference varRef) {
-            final String newName = varRef.getName() + counter;
-
-            final VariableReference value = new VariableReference(newName);
-            final Type type = findVariableType(varRef, queryType);
-
-            variables.put(newName, environment.<BraidContext>getContext().getExecutionContext().getVariables().get(varRef.getName()));
-            queryOp.getVariableDefinitions().add(new VariableDefinition(newName, type));
-            return value;
-        }
-
-        private boolean isVariableAlreadyNamespaced(VariableReference varRef) {
-            return varRef.getName().endsWith(String.valueOf(counter));
-        }
-
-        private static Type findVariableType(VariableReference varRef, OperationDefinition queryType) {
-            return queryType.getVariableDefinitions()
-                    .stream()
-                    .filter(d -> d.getName().equals(varRef.getName()))
-                    .map(VariableDefinition::getType)
-                    .findFirst()
-                    .orElseThrow(IllegalArgumentException::new);
-        }
-    }
 
     private static class FieldRequest {
         private final Field field;

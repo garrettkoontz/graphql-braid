@@ -62,7 +62,7 @@ public class QueryExecutorTest {
 
         Document query = new Parser().parseDocument("query {foo(id:fooid){id, title, baz, mylist {name}}}");
         Field fooField = (Field) ((OperationDefinition) query.getDefinitions().get(0)).getSelectionSet().getSelections().stream().filter(d -> d instanceof Field && ((Field) d).getName().equals("foo")).findFirst().get();
-        queryExecutor.trimFieldSelection(source, env, fooField);
+        TrimFieldsSelection.trimFieldSelection(source, env, fooField);
     }
 
     @Test
