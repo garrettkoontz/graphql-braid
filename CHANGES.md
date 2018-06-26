@@ -4,6 +4,11 @@ Changelog for graphql-braid
 (Unreleased)
 -------------------
 
+- 
+
+0.10.11 (2018-06-26)
+-------------------
+
 - Support extensions on errors
 
 0.10.10 (2018-06-11)
