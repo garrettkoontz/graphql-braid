@@ -25,6 +25,8 @@ response:
         - bar
         - baz
         - rating
+      extensions:
+        somekey: somevalue
   data:
     foo:
       id: fooid
@@ -149,6 +151,8 @@ schemaSources:
           path:
             - baz100
             - rating
+          extensions:
+            somekey: somevalue
 
 
 
