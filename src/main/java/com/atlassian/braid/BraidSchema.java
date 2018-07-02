@@ -2,13 +2,7 @@ package com.atlassian.braid;
 
 import com.atlassian.braid.graphql.language.AliasablePropertyDataFetcher;
 import graphql.execution.DataFetcherResult;
-import graphql.language.FieldDefinition;
-import graphql.language.ListType;
-import graphql.language.NonNullType;
-import graphql.language.ObjectTypeDefinition;
-import graphql.language.Type;
-import graphql.language.TypeDefinition;
-import graphql.language.TypeName;
+import graphql.language.*;
 import graphql.schema.DataFetcher;
 import graphql.schema.DataFetchingEnvironment;
 import graphql.schema.GraphQLSchema;
@@ -28,6 +22,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import static com.atlassian.braid.TypeUtils.createDefaultMutationTypeDefinition;
 import static com.atlassian.braid.TypeUtils.createDefaultQueryTypeDefinition;
@@ -108,6 +103,7 @@ final class BraidSchema {
             }
 
             runtimeWiringBuilder.type(r.type, wiring -> wiring.dataFetcher(r.field, new BraidDataFetcher(key)));
+
             loaders.put(key, r.loader);
         });
         return loaders;
@@ -363,10 +359,12 @@ final class BraidSchema {
         }
 
         Collection<? extends TypeDefinition> getNonOperationTypes() {
-            return registry.types().values()
+            List<TypeDefinition> types =  registry.types().values()
                     .stream()
                     .filter(this::isNotOperationType)
                     .collect(toList());
+            types.addAll(registry.scalars().values());
+            return types;
         }
 
         Optional<ObjectTypeDefinition> getQueryType() {
