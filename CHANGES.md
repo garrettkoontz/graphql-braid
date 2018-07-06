@@ -4,7 +4,7 @@ Changelog for graphql-braid
 (Unreleased)
 -------------------
 
-- 
+- Fixed support for custom scalars
 
 0.10.11 (2018-06-26)
 -------------------

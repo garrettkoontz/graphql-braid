@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
+import java.util.stream.Stream;
 
 import static com.atlassian.braid.TypeUtils.createDefaultMutationTypeDefinition;
 import static com.atlassian.braid.TypeUtils.createDefaultQueryTypeDefinition;
@@ -363,10 +364,12 @@ final class BraidSchema {
         }
 
         Collection<? extends TypeDefinition> getNonOperationTypes() {
-            return registry.types().values()
-                    .stream()
-                    .filter(this::isNotOperationType)
-                    .collect(toList());
+            return Stream.concat(
+                    registry.types().values()
+                            .stream()
+                            .filter(this::isNotOperationType)
+                    , registry.scalars().values().stream()
+            ).collect(toList());
         }
 
         Optional<ObjectTypeDefinition> getQueryType() {

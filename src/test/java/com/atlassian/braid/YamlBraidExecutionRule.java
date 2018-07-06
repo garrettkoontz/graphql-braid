@@ -11,7 +11,13 @@ import graphql.ExecutionInput;
 import graphql.ExecutionResult;
 import graphql.GraphQLError;
 import graphql.execution.DataFetcherResult;
+import graphql.language.StringValue;
 import graphql.parser.Parser;
+import graphql.schema.Coercing;
+import graphql.schema.CoercingParseValueException;
+import graphql.schema.CoercingSerializeException;
+import graphql.schema.CoercingParseLiteralException;
+import graphql.schema.GraphQLScalarType;
 import graphql.schema.idl.SchemaParser;
 import graphql.schema.idl.TypeDefinitionRegistry;
 import org.junit.rules.MethodRule;
@@ -53,6 +59,36 @@ public class YamlBraidExecutionRule implements MethodRule {
 
     public Braid braid = null;
 
+    private GraphQLScalarType uuid = new GraphQLScalarType("UUID", "Universal Unique Identifier", new Coercing<UUID, String>() {
+        @Override
+        public String serialize(Object o) throws CoercingSerializeException {
+            if (o == null) return null;
+            if (o instanceof String) return (String) o;
+            if (o instanceof UUID) return ((UUID) o).toString();
+            throw new CoercingSerializeException(String.format("Unable to serialize %s", o.toString()));
+        }
+
+        @Override
+        public UUID parseValue(Object o) throws CoercingParseValueException {
+            if (o == null) return null;
+            if (o instanceof String) {
+                try {
+                    return UUID.fromString((String) o);
+                } catch (IllegalArgumentException e) {
+                    throw new CoercingParseValueException(e);
+                }
+            }
+            throw new CoercingParseValueException(String.format("Unable to parse value %s", o.toString()));
+        }
+
+        @Override
+        public UUID parseLiteral(Object o) throws CoercingParseLiteralException {
+            if (o == null) return null;
+            if(o instanceof StringValue) return UUID.fromString(((StringValue) o).getValue());
+            throw new CoercingParseLiteralException(String.format("Unable to parse literal %s", o.toString()));
+        }
+    });
+
     @Override
     public Statement apply(Statement base, FrameworkMethod method, Object target) {
         return new Statement() {
@@ -62,7 +98,7 @@ public class YamlBraidExecutionRule implements MethodRule {
                     TestConfiguration config = loadFromYaml(getYamlPath(method));
 
                     braid = Braid.builder()
-                            .withRuntimeWiring(rwb -> rwb.type("Fooable", wiring -> wiring.typeResolver(__ -> null)))
+                            .withRuntimeWiring(rwb -> rwb.type("Fooable", wiring -> wiring.typeResolver(__ -> null)).scalar(uuid))
                             .schemaSources(loadSchemaSources(config))
                             .build();
 

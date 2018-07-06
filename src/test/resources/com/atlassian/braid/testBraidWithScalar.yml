@@ -1,0 +1,60 @@
+request:
+  query: |
+    query($myid: String) {
+      foo(id: $myid) {
+        id
+        name
+        uuid
+      }
+    }
+  variables:
+    myid: FooId
+
+response:
+  errors: []
+  data:
+    foo:
+      id: FooId
+      name: Foo
+      uuid: fea84fe9-f942-4785-9212-22d66ca541dc
+
+schemaSources:
+  - name: foo
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        foo(id: String) : Foo
+      }
+
+      type Foo {
+        id: String
+        name: String
+        uuid: UUID
+      }
+
+      scalar UUID
+
+    expected:
+      query: |
+        query Bulk_Foo($myid100: String) {
+          foo100: foo(id: $myid100) {
+            id
+            name
+            uuid
+          }
+        }
+      variables:
+        myid100: FooId
+    response:
+      data:
+        foo100:
+          id: FooId
+          name: Foo
+          uuid: fea84fe9-f942-4785-9212-22d66ca541dc
+      errors: []
+
+
+

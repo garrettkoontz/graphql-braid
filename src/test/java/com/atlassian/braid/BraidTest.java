@@ -216,4 +216,8 @@ public class BraidTest {
     @Test
     public void testBraidWithVariableInDirective() {
     }
+
+    @Test
+    public void testBraidWithScalar() {
+    }
 }
